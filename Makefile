@@ -3,7 +3,7 @@ MTCNNLIBDIR = $(TOPDIR)/libmtcnn
 
 include makefile.mk
 
-EXES = test camera
+EXES = test
 
 SUBDIRS += $(MTCNNLIBDIR)
 
@@ -16,8 +16,6 @@ $(EXES) : libs
 test : test.o
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-camera : camera.o
-	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 libs : force
 	@for dir in $(SUBDIRS); do \

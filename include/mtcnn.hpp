@@ -36,6 +36,7 @@ struct face_box
 	face_landmark landmark;  
 };
 
+typedef std::vector<face_box> FACEBOXES;
 
 
 class mtcnn {
@@ -64,7 +65,7 @@ class mtcnn {
 
 
 		virtual int load_model(const std::string& model_dir)=0;
-		virtual void detect(cv::Mat& img, std::vector<face_box>& face_list)=0;
+		virtual void detect(std::vector<cv::Mat>& imgs, std::vector<FACEBOXES>& face_lists)=0;
 		virtual ~mtcnn(void){};
 
 	protected:

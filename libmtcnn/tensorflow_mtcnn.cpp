@@ -25,6 +25,24 @@
 #include "comm_lib.hpp"
 #include "utils.hpp"
 #include "tensorflow_mtcnn.hpp"
+static void copy_one_patch_whole(const cv::Mat& img,float * data_to, int height, int width)
+{
+	cv::Mat resized(height,width,CV_32FC3,data_to);
+
+
+	cv::Mat chop_img = img(cv::Range(0,img.rows),
+			cv::Range(0, img.cols));
+
+	int pad_top = 0;//std::abs(input_box.py0 - input_box.y0);
+	int pad_left = 0;//std::abs(input_box.px0 - input_box.x0);
+	int pad_bottom = 0;//img.rows-1;//std::abs(input_box.py1 - input_box.y1);
+	int pad_right = 0;//img.cols-1;//std::abs(input_box.px1-input_box.x1);
+
+	cv::copyMakeBorder(chop_img, chop_img, pad_top, pad_bottom,pad_left, pad_right,  cv::BORDER_CONSTANT, cv::Scalar(0));
+
+	cv::resize(chop_img,resized, cv::Size(width, height), 0, 0);
+}
+
 
 static int load_file(const std::string & fname, std::vector<char>& buf)
 {
@@ -89,10 +107,11 @@ static TF_Session * load_graph(const char * frozen_fname, TF_Graph ** p_graph)
 	return session;
 }
 
-static void generate_bounding_box_tf(const float * confidence_data, int confidence_size,
+static int generate_bounding_box_tf(const float * confidence_data, int confidence_size,
 		const float * reg_data, float scale, float threshold, 
-		int feature_h, int feature_w, std::vector<face_box>&  output, bool transposed)
+		int feature_h, int feature_w, FACEBOXES&  output, bool transposed)
 {
+	int len = 0;
 
 	int stride = 2;
 	int cellSize = 12;
@@ -142,11 +161,12 @@ static void generate_bounding_box_tf(const float * confidence_data, int confiden
 					box.regress[2]=reg_data[c_offset+2];
 					box.regress[3]= reg_data[c_offset+3];
 				}
-
+				len += (c_offset+3);
 				output.push_back(box);
 			}
 
 		}
+	return len;
 }
 
 /* To make tensor release happy...*/
@@ -185,15 +205,46 @@ int tf_mtcnn::load_model(const std::string& model_dir)
 
 	return 0;
 }
+/*void tobuffer(const std::vector<cv::Mat> &imgs, float *buf) {
+	int pos = 0;
+	for (cv::Mat img : imgs) {
+		int LLL = img.cols*img.rows * 3;
+		int nr = img.rows;
+		int nc = img.cols;
+		if (img.isContinuous())
+		{
+			nr = 1;
+			nc = LLL;
+		}
 
-void tf_mtcnn::run_PNet(const cv::Mat& img, scale_window& win, std::vector<face_box>& box_list)
-{
-	cv::Mat  resized;
+		for (int i = 0; i < nr; i++)
+		{
+			const uchar* inData = img.ptr<uchar>(i);
+			for (int j = 0; j < nc; j++)
+			{
+				buf[pos] = *inData++;
+				pos++;
+			}
+		}
+	}
+}
+*/
+
+void tf_mtcnn::run_PNet(const std::vector<cv::Mat>& imgs, 
+	scale_window& win, 
+	std::vector<FACEBOXES>& box_lists){
+	int count = imgs.size();
+
 	int scale_h=win.h;
 	int scale_w=win.w;
 	float scale=win.scale;
 
-	cv::resize(img, resized, cv::Size(scale_w, scale_h),0,0);
+	std::vector<cv::Mat> resizeds;
+	for(cv::Mat img: imgs){
+		cv::Mat  resized;
+		cv::resize(img, resized, cv::Size(scale_w, scale_h),0,0);
+		resizeds.push_back(resized);
+	}
 
 	/* tensorflow related*/
 
@@ -206,9 +257,33 @@ void tf_mtcnn::run_PNet(const cv::Mat& img, scale_window& win, std::vector<face_
 
 	input_names.push_back({input_name, 0});
 
-	const int64_t dim[4] = {1,scale_h,scale_w,3};
+	const int64_t dim[4] = {count,scale_h,scale_w,3};
 
-	TF_Tensor* input_tensor = TF_NewTensor(TF_FLOAT,dim,4,resized.ptr(),sizeof(float)*scale_w*scale_h*3,dummy_deallocator,nullptr);
+	int channel = 3;
+	int width = scale_w;
+	int height = scale_h;
+	int  input_size=count*height*width*channel;
+	std::vector<float> input_buffer(input_size);
+	float * input_data=input_buffer.data();
+
+	//float *buf = new float[count*scale_w*scale_h*3];
+	//tobuffer(resizeds, buf);
+	for(int mm = 0; mm < count; mm++){
+		const cv::Mat &img = resizeds[mm];
+		int patch_size=width*height*channel;
+		copy_one_patch_whole(img, input_data,height,width);
+
+		input_data+=patch_size;
+	}
+
+	TF_Tensor* input_tensor = TF_NewTensor(TF_FLOAT,
+					dim,
+					4,
+					input_buffer.data(),//resized.ptr(),
+					count*sizeof(float)*scale_w*scale_h*3,
+					dummy_deallocator,
+					nullptr);
+	//delete []buf;
 
 	input_values.push_back(input_tensor);
 
@@ -243,27 +318,57 @@ void tf_mtcnn::run_PNet(const cv::Mat& img, scale_window& win, std::vector<face_
 
 	int conf_size=feature_h*feature_w*2;
 
-	std::vector<face_box> candidate_boxes;
+	int clen = conf_size;//output_values[1]->flat<float>().size()/count;
+	//int rpos = 0;//output_values[0]->flat<float>().size()/count;
 
-	generate_bounding_box_tf(conf_data,conf_size,reg_data, 
-			scale,pnet_threshold_,feature_h,feature_w,candidate_boxes,true);
+	for(int i = 0; i < count; i++){
+
+		FACEBOXES candidate_boxes;
+
+		int rlen = generate_bounding_box_tf(conf_data,
+				conf_size,
+				reg_data, 
+				scale,
+				pnet_threshold_,
+				feature_h,
+				feature_w,
+				candidate_boxes,
+				true);
 
 
-	nms_boxes(candidate_boxes, 0.5, NMS_UNION,box_list);
+		FACEBOXES box_list;
+		nms_boxes(candidate_boxes, 0.5, NMS_UNION,box_list);
+		box_lists.push_back(box_list);
 
+		// xyz, see RNET,ONET
+		conf_data += clen;//2;
+		//reg_data += rlen;//4;
+	}
 	TF_DeleteStatus(s);
 	TF_DeleteTensor(output_values[0]);
 	TF_DeleteTensor(output_values[1]);
 	TF_DeleteTensor(input_tensor);
-
+	
 }
 
 
 
-static void copy_one_patch(const cv::Mat& img,face_box&input_box,float * data_to, int height, int width)
+
+static void copy_one_patch(const cv::Mat& img,face_box&input_box,float * data_to, int height, int width, const std::string &pre)
 {
 	cv::Mat resized(height,width,CV_32FC3,data_to);
-
+	#if 0
+		printf("%s----(%f, %f, %f, %f),(%f, %f, %f, %f)\n",
+			pre.c_str(),
+			input_box.px0,
+			input_box.py0,
+			input_box.px1,
+			input_box.py1,
+			input_box.x0,
+			input_box.y0,
+			input_box.x1,
+			input_box.y1);
+	#endif
 
 	cv::Mat chop_img = img(cv::Range(input_box.py0,input_box.py1),
 			cv::Range(input_box.px0, input_box.px1));
@@ -279,9 +384,18 @@ static void copy_one_patch(const cv::Mat& img,face_box&input_box,float * data_to
 }
 
 
-void tf_mtcnn::run_RNet(const cv::Mat& img, std::vector<face_box>& pnet_boxes, std::vector<face_box>& output_boxes)
-{
-	int batch=pnet_boxes.size();
+
+void tf_mtcnn::run_RNet(const std::vector<cv::Mat>& imgs, 
+		std::vector<FACEBOXES>& pnet_boxess, 
+		std::vector<FACEBOXES>& output_boxess){
+	int count = imgs.size();
+	std::vector<int> batchs;
+	int cc = 0;
+	for(int mm = 0; mm < count; mm++){
+		int batch=pnet_boxess[mm].size();
+		batchs.push_back(batch);
+		cc += batch;
+	}
 	int channel = 3;
 	int height = 24;
 	int width = 24;
@@ -289,21 +403,25 @@ void tf_mtcnn::run_RNet(const cv::Mat& img, std::vector<face_box>& pnet_boxes, s
 
 	/* prepare input image data */
 
-	int  input_size=batch*height*width*channel;
+	int  input_size=0;
+	for(int mm = 0; mm < count; mm++){
+		input_size += batchs[mm]*height*width*channel;
+	}
 
 	std::vector<float> input_buffer(input_size);
 
 	float * input_data=input_buffer.data();
 
-	for(int i=0;i<batch;i++)
-	{
-		int patch_size=width*height*channel;
+	for(int mm = 0; mm < count; mm++){
+		int batch = batchs[mm];
+		const cv::Mat &img = imgs[mm];
+		for(int i=0;i<batch;i++){
+			int patch_size=width*height*channel;
+			copy_one_patch(img,pnet_boxess[mm][i], input_data,height,width, "RNet");
 
-		copy_one_patch(img,pnet_boxes[i], input_data,height,width);
-
-		input_data+=patch_size;
+			input_data+=patch_size;
+		}
 	}
-
 
 	/* tensorflow  related */
 
@@ -317,7 +435,7 @@ void tf_mtcnn::run_RNet(const cv::Mat& img, std::vector<face_box>& pnet_boxes, s
 	input_names.push_back({input_name, 0});
 
 
-	const int64_t dim[4] = {batch,height,width,channel};
+	const int64_t dim[4] = {cc,height,width,channel};
 
 
 	TF_Tensor* input_tensor = TF_NewTensor(TF_FLOAT,dim,4,input_buffer.data(),sizeof(float)*input_size,
@@ -350,48 +468,59 @@ void tf_mtcnn::run_RNet(const cv::Mat& img, std::vector<face_box>& pnet_boxes, s
 	const float * reg_data=(const float *)TF_TensorData(output_values[0]);
 
 
-	for(int i=0;i<batch;i++)
-	{
+	for(int mm = 0; mm < count; mm++){
+		FACEBOXES output_boxes;
+		FACEBOXES &pnet_boxes = pnet_boxess[mm];
+		int batch = batchs[mm];
+		for(int i=0;i<batch;i++){
 
-		if(conf_data[1]>rnet_threshold_)
-		{
-			face_box output_box;
+			if(conf_data[1]>rnet_threshold_){
+				face_box output_box;
 
-			face_box& input_box=pnet_boxes[i];
+				face_box& input_box=pnet_boxes[i];
 
-			output_box.x0=input_box.x0;
-			output_box.y0=input_box.y0;
-			output_box.x1=input_box.x1;
-			output_box.y1=input_box.y1;
+				output_box.x0=input_box.x0;
+				output_box.y0=input_box.y0;
+				output_box.x1=input_box.x1;
+				output_box.y1=input_box.y1;
 
-			output_box.score = *(conf_data+1);
+				output_box.score = *(conf_data+1);
 
-			/*Note: regress's value is swaped here!!!*/
+				/*Note: regress's value is swaped here!!!*/
 
-			output_box.regress[0]=reg_data[1];
-			output_box.regress[1]=reg_data[0];
-			output_box.regress[2]=reg_data[3];
-			output_box.regress[3]=reg_data[2];
+				output_box.regress[0]=reg_data[1];
+				output_box.regress[1]=reg_data[0];
+				output_box.regress[2]=reg_data[3];
+				output_box.regress[3]=reg_data[2];
 
-			output_boxes.push_back(output_box);
+				output_boxes.push_back(output_box);
 
+
+			}
+
+			conf_data+=2;
+			reg_data+=4;
 
 		}
-
-		conf_data+=2;
-		reg_data+=4;
-
+		output_boxess[mm] = output_boxes;
 	}
-
 	TF_DeleteStatus(s);
 	TF_DeleteTensor(output_values[0]);
 	TF_DeleteTensor(output_values[1]);
 	TF_DeleteTensor(input_tensor);
 }
 
-void tf_mtcnn::run_ONet(const cv::Mat& img, std::vector<face_box>& rnet_boxes, std::vector<face_box>& output_boxes)
-{
-	int batch=rnet_boxes.size();
+void tf_mtcnn::run_ONet(const std::vector<cv::Mat>& imgs, 
+			std::vector<FACEBOXES>& rnet_boxess, 
+			std::vector<FACEBOXES>& output_boxess){
+	int count = imgs.size();
+	std::vector<int> batchs;
+	int cc = 0;
+	for(int mm = 0; mm < count; mm++){
+		int batch=rnet_boxess[mm].size();
+		batchs.push_back(batch);
+		cc += batch;
+	}
 	int channel = 3;
 	int height = 48;
 	int width = 48;
@@ -399,21 +528,26 @@ void tf_mtcnn::run_ONet(const cv::Mat& img, std::vector<face_box>& rnet_boxes, s
 
 	/* prepare input image data */
 
-	int  input_size=batch*height*width*channel;
+	int  input_size=0;
+	for(int mm = 0; mm < count; mm++){
+		input_size += batchs[mm]*height*width*channel;
+	}
 
 	std::vector<float> input_buffer(input_size);
 
 	float * input_data=input_buffer.data();
 
-	for(int i=0;i<batch;i++)
-	{
-		int patch_size=width*height*channel;
+	for(int mm = 0; mm < count; mm++){
+		int batch = batchs[mm];
+		const cv::Mat &img = imgs[mm];
+		for(int i=0;i<batch;i++){
+			int patch_size=width*height*channel;
 
-		copy_one_patch(img,rnet_boxes[i], input_data,height,width);
+			copy_one_patch(img,rnet_boxess[mm][i], input_data,height,width, "ONet");
 
-		input_data+=patch_size;
+			input_data+=patch_size;
+		}
 	}
-
 
 	/* tensorflow  related */
 
@@ -426,7 +560,7 @@ void tf_mtcnn::run_ONet(const cv::Mat& img, std::vector<face_box>& rnet_boxes, s
 
 	input_names.push_back({input_name, 0});
 
-	const int64_t dim[4] = {batch,height,width,channel};
+	const int64_t dim[4] = {cc,height,width,channel};
 
 	TF_Tensor* input_tensor = TF_NewTensor(TF_FLOAT,dim,4,input_buffer.data(),sizeof(float)*input_size,
 			dummy_deallocator,nullptr);
@@ -461,41 +595,45 @@ void tf_mtcnn::run_ONet(const cv::Mat& img, std::vector<face_box>& rnet_boxes, s
 	const float * reg_data=(const float *)TF_TensorData(output_values[0]);
 	const float * points_data=(const float *)TF_TensorData(output_values[1]);
 
-	for(int i=0;i<batch;i++)
-	{
+	for(int mm = 0; mm < count; mm++){
+		FACEBOXES rnet_boxes = rnet_boxess[mm];
+		FACEBOXES output_boxes;
+		int batch = batchs[mm];
+		for(int i=0;i<batch;i++){
 
-		if(conf_data[1]>onet_threshold_)
-		{
-			face_box output_box;
+			if(conf_data[1]>onet_threshold_){
+				face_box output_box;
 
-			face_box& input_box=rnet_boxes[i];
+				face_box& input_box=rnet_boxes[i];
 
-			output_box.x0=input_box.x0;
-			output_box.y0=input_box.y0;
-			output_box.x1=input_box.x1;
-			output_box.y1=input_box.y1;
+				output_box.x0=input_box.x0;
+				output_box.y0=input_box.y0;
+				output_box.x1=input_box.x1;
+				output_box.y1=input_box.y1;
 
-			output_box.score = conf_data[1];
+				output_box.score = conf_data[1];
 
-			output_box.regress[0]=reg_data[1];
-			output_box.regress[1]=reg_data[0];
-			output_box.regress[2]=reg_data[3];
-			output_box.regress[3]=reg_data[2];
+				output_box.regress[0]=reg_data[1];
+				output_box.regress[1]=reg_data[0];
+				output_box.regress[2]=reg_data[3];
+				output_box.regress[3]=reg_data[2];
 
-			/*Note: switched x,y points value too..*/
-			for (int j = 0; j<5; j++){
-				output_box.landmark.x[j] = *(points_data + j+5);
-				output_box.landmark.y[j] = *(points_data + j);
+				/*Note: switched x,y points value too..*/
+				for (int j = 0; j<5; j++){
+					output_box.landmark.x[j] = *(points_data + j+5);
+					output_box.landmark.y[j] = *(points_data + j);
+				}
+
+				output_boxes.push_back(output_box);
+
+
 			}
 
-			output_boxes.push_back(output_box);
-
-
+			conf_data+=2;
+			reg_data+=4;
+			points_data+=10;
 		}
-
-		conf_data+=2;
-		reg_data+=4;
-		points_data+=10;
+		output_boxess[mm] = output_boxes;
 	}
 
 	TF_DeleteStatus(s);
@@ -507,103 +645,120 @@ void tf_mtcnn::run_ONet(const cv::Mat& img, std::vector<face_box>& rnet_boxes, s
 }
 
 
-void tf_mtcnn::detect(cv::Mat& img, std::vector<face_box>& face_list)
+void tf_mtcnn::detect(std::vector<cv::Mat>& imgs, 
+	std::vector<FACEBOXES>& face_lists)
 {
-	cv::Mat working_img;
+	int count = imgs.size();
+
+	std::vector<cv::Mat> working_imgs;
+	int img_h  = 0;
+	int img_w = 0;
 
 	float alpha=0.0078125;
 	float mean=127.5;
 
-
-
-	img.convertTo(working_img, CV_32FC3);
-
-	working_img=(working_img-mean)*alpha;
-
-	working_img=working_img.t();
-
-	cv::cvtColor(working_img,working_img, cv::COLOR_BGR2RGB);
-
-	int img_h=working_img.rows;
-	int img_w=working_img.cols;
-
-
 	std::vector<scale_window> win_list;
 
-	std::vector<face_box> total_pnet_boxes;
-	std::vector<face_box> total_rnet_boxes;
-	std::vector<face_box> total_onet_boxes;
+	std::vector<FACEBOXES> total_pnet_boxess(count);
+	std::vector<FACEBOXES> total_rnet_boxess(count);
+	std::vector<FACEBOXES> total_onet_boxess(count);
+	face_lists.resize(count);
 
+	for(int mm = 0; mm < count; mm++){
+		cv::Mat &img = imgs[mm];
+		cv::Mat working_img;
+		img.convertTo(working_img, CV_32FC3);
 
-	cal_pyramid_list(img_h,img_w,min_size_,factor_,win_list);
+		working_img=(working_img-mean)*alpha;
 
-	for(unsigned int i=0;i<win_list.size();i++)
-	{
-		std::vector<face_box>boxes;
+		working_img=working_img.t();
 
-		run_PNet(working_img,win_list[i],boxes);
+		cv::cvtColor(working_img,working_img, cv::COLOR_BGR2RGB);
 
-		total_pnet_boxes.insert(total_pnet_boxes.end(),boxes.begin(),boxes.end());
+		if(mm == 0){
+			img_h=working_img.rows;
+			img_w=working_img.cols;
+
+			cal_pyramid_list(img_h,img_w,min_size_,factor_,win_list);
+		}
+		working_imgs.push_back(working_img);
 	}
 
+	for(unsigned int i=0;i<win_list.size();i++){
+		std::vector<FACEBOXES> boxess;
 
-	std::vector<face_box> pnet_boxes;
-	process_boxes(total_pnet_boxes,img_h,img_w,pnet_boxes);
+		run_PNet(working_imgs,win_list[i],boxess);
 
+		for(int mm = 0; mm < count; mm++){
+			total_pnet_boxess[mm].insert(total_pnet_boxess[mm].end(),
+					boxess[mm].begin(),
+					boxess[mm].end());
+		}
+	}
+	
 
-        if(pnet_boxes.size()==0)
+	std::vector<FACEBOXES> pnet_boxess(count);
+	for(int mm = 0; mm < count; mm++){ 	
+		FACEBOXES &pnet_boxes = pnet_boxess[mm];
+		process_boxes(total_pnet_boxess[mm],img_h,img_w,pnet_boxes);
+	}
+
+        if(pnet_boxess.size()==0)
               return;
 
 	// RNet
-	std::vector<face_box> rnet_boxes;
+	std::vector<FACEBOXES> rnet_boxess(count);
+	run_RNet(working_imgs, pnet_boxess,total_rnet_boxess);
 
-	run_RNet(working_img, pnet_boxes,total_rnet_boxes);
+	for(int mm = 0; mm < count; mm++){	
+		process_boxes(total_rnet_boxess[mm],img_h,img_w,rnet_boxess[mm]);
+	}
 
-	process_boxes(total_rnet_boxes,img_h,img_w,rnet_boxes);
-
-        if(rnet_boxes.size()==0)
+        if(rnet_boxess.size()==0)
               return;
 
 	//ONet
-	run_ONet(working_img, rnet_boxes,total_onet_boxes);
+	run_ONet(working_imgs, rnet_boxess,total_onet_boxess);
 
 	//calculate the landmark
+	for(int mm = 0; mm < count; mm++){
+		FACEBOXES &total_onet_boxes = total_onet_boxess[mm];
+		for(unsigned int i=0;i<total_onet_boxes.size();i++){
+			face_box& box=total_onet_boxes[i];
 
-	for(unsigned int i=0;i<total_onet_boxes.size();i++)
-	{
-		face_box& box=total_onet_boxes[i];
+			float h=box.x1-box.x0+1;
+			float w=box.y1-box.y0+1;
 
-		float h=box.x1-box.x0+1;
-		float w=box.y1-box.y0+1;
+			for(int j=0;j<5;j++){
+				box.landmark.x[j]=box.x0+w*box.landmark.x[j]-1;
+				box.landmark.y[j]=box.y0+h*box.landmark.y[j]-1;
+			}
 
-		for(int j=0;j<5;j++)
-		{
-			box.landmark.x[j]=box.x0+w*box.landmark.x[j]-1;
-			box.landmark.y[j]=box.y0+h*box.landmark.y[j]-1;
 		}
-
 	}
 
 
 	//Get Final Result
-	regress_boxes(total_onet_boxes);
-	nms_boxes(total_onet_boxes, 0.7, NMS_MIN,face_list);
+	for(int mm = 0; mm < count; mm++){
+		FACEBOXES &total_onet_boxes = total_onet_boxess[mm];
+		regress_boxes(total_onet_boxes);	
+		FACEBOXES &face_list =  face_lists[mm];
+		nms_boxes(total_onet_boxes, 0.7, NMS_MIN,face_list);	
+	
 
-	//switch x and y, since working_img is transposed
+		//switch x and y, since working_img is transposed
 
-	for(unsigned int i=0;i<face_list.size();i++)
-	{
-		face_box& box=face_list[i];
+		for(unsigned int i=0;i<face_list.size();i++){
+			face_box& box=face_list[i];
 
-		std::swap(box.x0,box.y0);
-		std::swap(box.x1,box.y1);
+			std::swap(box.x0,box.y0);
+			std::swap(box.x1,box.y1);
 
-		for(int l=0;l<5;l++)
-		{
-			std::swap(box.landmark.x[l],box.landmark.y[l]);
+			for(int l=0;l<5;l++){
+				std::swap(box.landmark.x[l],box.landmark.y[l]);
+			}
 		}
 	}
-
 }
 
 

@@ -12,7 +12,7 @@ class tf_mtcnn: public mtcnn {
 
 		int load_model(const std::string& model_dir);
 
-		void detect(cv::Mat& img, std::vector<face_box>& face_list);
+		void detect(std::vector<cv::Mat>& imgs, std::vector<FACEBOXES>& face_lists);
 
 		~tf_mtcnn();
 
@@ -20,11 +20,18 @@ class tf_mtcnn: public mtcnn {
 	protected:
 
 
-		void run_PNet(const cv::Mat& img, scale_window& win, std::vector<face_box>& box_list);
+		void run_PNet(const std::vector<cv::Mat>& imgs, 
+				scale_window& win, 
+				std::vector<FACEBOXES>& box_lists);
 
 
-		void run_RNet(const cv::Mat& img,std::vector<face_box>& pnet_boxes, std::vector<face_box>& output_boxes);
-		void run_ONet(const cv::Mat& img,std::vector<face_box>& rnet_boxes, std::vector<face_box>& output_boxes);
+		void run_RNet(const std::vector<cv::Mat>& imgs,
+				std::vector<FACEBOXES>& pnet_boxess, 
+				std::vector<FACEBOXES>& output_boxes);
+
+		void run_ONet(const std::vector<cv::Mat>& imgs,
+				std::vector<FACEBOXES>& rnet_boxess, 
+				std::vector<FACEBOXES>& output_boxess);
 	private:
 
 		TF_Session * sess_;

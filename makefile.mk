@@ -5,14 +5,15 @@ AR = $(PREFIX)ar
 CFLAGS += -Wall -O2
 CFLAGS += -I$(TOPDIR)/include
 
-CXXFLAGS += -Wall -O2 -ggdb -std=c++11
+#CXXFLAGS += -Wall -ggdb -std=c++11
+CXXFLAGS += -Wall -O3 -std=c++11
 CXXFLAGS += -I$(TOPDIR)/include
 
 ARFLAGS = -rcv
 
-CAFFE_ON = 1
+CAFFE_ON = 0
 MXNET_ON = 0
-TF_ON = 0
+TF_ON = 1
 
 #MTCNN_LDFLAGS = -L$(MTCNNLIBDIR) -Wl,--whole-archive -lmtcnn -Wl,--no-whole-archive
 LDFLAGS += -L$(MTCNNLIBDIR) -lmtcnn
@@ -43,14 +44,18 @@ endif
 
 #  tensorflow settings
 ifeq ($(TF_ON), 1)
-   TENSORFLOW_INCS += -I$(TENSORFLOW_ROOT)/include
-   LIBS+=-Wl,-rpath,$(TENSORFLOW_ROOT)/lib -L$(TENSORFLOW_ROOT)/lib -ltensorflow
+   #TENSORFLOW_INCS += -I$(TENSORFLOW_ROOT)/include
+   #LIBS+=-Wl,-rpath,$(TENSORFLOW_ROOT)/lib -L$(TENSORFLOW_ROOT)/lib -ltensorflow
 
-   CXXFLAGS +=$(TENSORFLOW_INCS)
+   TENSORFLOW_INCS += -I/home/xyz/code1/tensorflow-1.4.0
+   LIBS+=-Wl,-rpath,/home/xyz/code1/tensorflow-1.4.0/bazel-bin/tensorflow -L/home/xyz/code1/tensorflow-1.4.0/bazel-bin/tensorflow -ltensorflow
+
+   CXXFLAGS +=$(TENSORFLOW_INCS) $(LIBS)
 endif
 
 # arm compute library setting
-LDFLAGS += -L$(ACL_ROOT)/build -larm_compute
+3LDFLAGS += -L$(ACL_ROOT)/build -larm_compute
+LDFLAGS += -L$(ACL_ROOT)/build
 
 %.os : %.cpp
 	$(CXX) -fpic -shared $(CXXFLAGS) -c $< -o $@

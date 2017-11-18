@@ -15,19 +15,19 @@ struct scale_window
 
 int numpy_round(float f);
 
-void nms_boxes(std::vector<face_box>& input, float threshold, int type, std::vector<face_box>&output);
+void nms_boxes(FACEBOXES& input, float threshold, int type, FACEBOXES&output);
 
-void regress_boxes(std::vector<face_box>& rects);
+void regress_boxes(FACEBOXES& rects);
 
-void square_boxes(std::vector<face_box>& rects);
+void square_boxes(FACEBOXES& rects);
 
-void padding(int img_h, int img_w, std::vector<face_box>& rects);
+void padding(int img_h, int img_w, FACEBOXES& rects);
 
-void process_boxes(std::vector<face_box>& input, int img_h, int img_w, std::vector<face_box>& rects);
+void process_boxes(FACEBOXES& input, int img_h, int img_w, FACEBOXES& rects);
 
 void generate_bounding_box(const float * confidence_data, int confidence_size,
                const float * reg_data, float scale, float threshold,
-               int feature_h, int feature_w, std::vector<face_box>&  output, bool transposed);
+               int feature_h, int feature_w, FACEBOXES&  output, bool transposed);
 
 
 void set_input_buffer(std::vector<cv::Mat>& input_channels,
@@ -36,8 +36,8 @@ void set_input_buffer(std::vector<cv::Mat>& input_channels,
 
 void  cal_pyramid_list(int height, int width, int min_size, float factor,std::vector<scale_window>& list);
 
-void cal_landmark(std::vector<face_box>& box_list);
+void cal_landmark(FACEBOXES& box_list);
 
-void set_box_bound(std::vector<face_box>& box_list, int img_h, int img_w);
+void set_box_bound(FACEBOXES& box_list, int img_h, int img_w);
 
 #endif
