@@ -16,7 +16,7 @@ This is a C++ project to implement MTCNN, fork form https://github.com/OAID/mtcn
 * TF_ROOT=/home/xyz/code1/tensorflow-1.4.0  make
 
 # Run
-If the basic work is ready (build caffe/Mxnet/Tensorflow sucessfully) followed by above steps. You can run the test now.
+run the test now.
 ### 1. Test:
 
 	./r.sh
