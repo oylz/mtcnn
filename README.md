@@ -1,6 +1,6 @@
 # MTCNN C++ Implementation
 
-This is a C++ project to implement MTCNN, fork form https://github.com/OAID/mtcnn, only for tensorflow parallel runing.
+This is a C++ project to implement MTCNN, fork form https://github.com/OAID/mtcnn, I make it only running in  tensorflow, and  parallel runing.
 
 # Build
 
