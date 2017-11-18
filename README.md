@@ -6,6 +6,7 @@ This is a C++ project to implement MTCNN, fork form https://github.com/OAID/mtcn
 
 * Bulid tensorflow
    
+   
    bazel build -c opt --copt=-mavx --copt=-mavx2 --copt=-mfma --copt=-mfpmath=both --copt=-msse4.2 --config=cuda //tensorflow/tools/lib_package:libtensorflow
 	
 
