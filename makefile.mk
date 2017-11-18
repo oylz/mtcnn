@@ -44,11 +44,8 @@ endif
 
 #  tensorflow settings
 ifeq ($(TF_ON), 1)
-   #TENSORFLOW_INCS += -I$(TENSORFLOW_ROOT)/include
-   #LIBS+=-Wl,-rpath,$(TENSORFLOW_ROOT)/lib -L$(TENSORFLOW_ROOT)/lib -ltensorflow
-
-   TENSORFLOW_INCS += -I/home/xyz/code1/tensorflow-1.4.0
-   LIBS+=-Wl,-rpath,/home/xyz/code1/tensorflow-1.4.0/bazel-bin/tensorflow -L/home/xyz/code1/tensorflow-1.4.0/bazel-bin/tensorflow -ltensorflow
+   TENSORFLOW_INCS += -I$(TF_ROOT)
+   LIBS+=-Wl,-rpath,$(TF_ROOT)/bazel-bin/tensorflow -L$(TF_ROOT)/bazel-bin/tensorflow -ltensorflow
 
    CXXFLAGS +=$(TENSORFLOW_INCS) $(LIBS)
 endif
