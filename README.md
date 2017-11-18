@@ -13,7 +13,7 @@ This is a C++ project to implement MTCNN, fork form https://github.com/OAID/mtcn
 * Install opencv package 
 
 
-* TF_ROOT=/home/xyz/code1/tensorflow-1.4.0  make
+* change TF_ROOT in make.sh, and then run it: ./make.sh
 
 # Run
 run the test now.
