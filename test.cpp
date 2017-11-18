@@ -60,8 +60,8 @@ int main(int argc, char * argv[])
 
     p_mtcnn->load_model("./models");
 #if 1
-	int count = 1;//4;
-	int LIMIT = 600;//150;
+	int count = 4;
+	int LIMIT = 150;
 	for(int mm = 1; mm < LIMIT; mm++){
 		std::vector<cv::Mat> frames;
 
